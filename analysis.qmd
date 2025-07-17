@@ -59,26 +59,6 @@ library(parallel)
 
 ## Utilitary functions
 
-A tuning of the `mgcv::gam()` function:
-
-```{r}
-gam2 <- function(..., data) {
-  out <- mgcv::gam(..., data = data, method = "REML")
-  out$data <- data
-  out
-}
-```
-
-A tuning of the `scam::scam()` function:
-
-```{r}
-scam2 <- function(..., data) {
-  out <- scam::scam(..., data = data)
-  out$data <- data
-  out
-}
-```
-
 A tuning of the `parallel::mclapply()` function (I think this function works on
 UNIX-like systems only however...):
 
@@ -112,9 +92,9 @@ beta_parameters <- function(L, U, mu, ci = .95, interval = c(.01, 1e3), ...) {
   p <- (1 - ci) / 2
   objective <- function(alpha) {
     beta <- beta_from_alpha(alpha, mu)
-    q025 <- qbeta(p, alpha, beta)
-    q975 <- qbeta(1 - p, alpha, beta)
-    (q025 - L)^2 + (q975 - U)^2
+    q_low <- qbeta(p,     alpha, beta)
+    q_upp <- qbeta(1 - p, alpha, beta)
+    (q_low - L)^2 + (q_upp - U)^2
   }
   alpha_est <- optimize(objective, interval, ...)$minimum
   c(alpha = alpha_est, beta = beta_from_alpha(alpha_est, mu))
@@ -140,7 +120,83 @@ hfmd <- data_file |>
 ```
 
 
-## Our method
+## Temporally independent age profiles
+
+Age and time dimensions:
+
+```{r}
+samples_collections <- 6:9
+age_values <- seq(0, 15, le = 512)
+```
+
+A function that generates prediction and confidence interval of the seroprevalence
+age profile from a `gam` model prediction object `x`:
+
+```{r}
+pred2table <- function(x, link_inv, df, ci = .95) {
+  p <- (1 - ci) / 2
+  x |>
+    as_tibble() |> 
+    mutate(lwr = link_inv(fit + qt(    p, df) * se.fit),
+           upr = link_inv(fit + qt(1 - p, df) * se.fit),
+           fit = link_inv(fit)) |> 
+    select(- se.fit)
+}
+```
+
+A function that computes sero-prevalence age profile with confidence interval for a
+given samples collection `col_id`:
+
+```{r include = FALSE, eval = FALSE}
+age_profile <- function(col_id, ci = .95) {
+  dat <- filter(hfmd, collection == col_id)
+  mod <- gam(pos ~ s(age), binomial, dat)
+  mod |> 
+    predict(list(age = age_values), se.fit = TRUE) %>%
+    c(list(age = age_values), .) |> 
+    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)))
+}
+```
+
+```{r}
+age_profile <- function(data, col_id, ci = .95) {
+  dat <- filter(data, collection == col_id)
+  mod <- gam(pos ~ s(age), binomial, dat)
+  mod |> 
+    predict(list(age = age_values), se.fit = TRUE) %>%
+    c(list(age = age_values), .) |> 
+    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)))
+}
+```
+
+A function that plots the sero-prevalence profiles with confidence intervals for all
+the samples collections:
+
+```{r}
+plot_profiles <- function(x) {
+  plot(NA, xlim = c(0, 15), ylim = 0:1, xlab = "age (years)", ylab = "sero-prevalence")
+  walk2(x, 1:4, ~ with(.x, {
+                             polygon2(age, lwr, upr, col = adjustcolor(.y, .2))
+                             lines(age, fit, col = .y)
+                           }))
+}
+```
+
+Computing the sero-prevalence age profiles:
+
+```{r}
+#age_profiles <- map(samples_collections, age_profile)
+age_profiles <- map(samples_collections, age_profile, data = hfmd)
+```
+
+Plotting the sero-prevalence age profiles:
+
+```{r}
+plot_profiles(age_profiles)
+```
+
+
+## Temporally linked age profiles
 
 ### Overview
 
@@ -193,13 +249,6 @@ the predictions and confidence interval bounds of step 2a as a function of age
 
 ### Implementation
 
-Age and time dimensions:
-
-```{r}
-samples_collections <- 6:9
-age_values <- seq(0, 15, le = 512)
-```
-
 Generating the mean time points of each samples collection:
 
 ```{r}
@@ -211,74 +260,42 @@ mean_collection_times <- hfmd |>
 
 Step 1:
 
-```{r eval = FALSE, include = FALSE}
+```{r include = FALSE, eval = FALSE}
 step1 <- function(col_id = 6, ci = .95, interval = c(.01, 1e3),
                   n_beta = 100, n_Bern = 100, ...) {
-  p <- (1 - ci) / 2
-  dat <- filter(hfmd, collection == col_id)
-# 1. unconstrained binomial GAM:
-  mod <- gam(pos ~ s(age), binomial, dat)
-# 2. prediction + confidence interval:
-  df <- nrow(dat) - length(coef(mod))
-  link_inv <- family(mod)$linkinv
-  mod |> 
-    predict(list(age = age_values), se.fit = TRUE) |> 
-    magrittr::extract(c("fit", "se.fit")) %>%
-    c(list(age = age_values), .) |>
-    as_tibble() |> 
-    mutate(lwr = link_inv(fit + qt(    p, df) * se.fit),
-           upr = link_inv(fit + qt(1 - p, df) * se.fit),
-           fit = link_inv(fit)) |> 
-    select(- se.fit) |> 
-# 3. convert predictions into parameters of a beta distribution:
+# 1. age profile (prediction + confidence interval):
+  age_profile(col_id, ci) |> 
+# 2. convert predictions into parameters of a beta distribution:
     mutate(est = pmap(list(lwr, upr, fit), beta_parameters, ci, interval, ...)) |> 
     unnest_wider(est) |> 
-# 4. generate rate values from the beta distribution:
+# 3. generate rate values from the beta distribution:
     mutate(seroprevalence = map2(alpha, beta, ~ rbeta(n_beta, .x, .y)),
-# 5. generate Bernoulli realizations from each rate value:
+# 4. generate Bernoulli realizations from each rate value:
            seropositivity = map(seroprevalence, ~ map(.x, ~ rbinom(n_Bern, 1, .x))))
 }
 ```
 
 ```{r}
-pred2table <- function(x, link_inv, df, ci) {
-  p <- (1 - ci) / 2
-  x |>
-    as_tibble() |> 
-    mutate(lwr = link_inv(fit + qt(    p, df) * se.fit),
-           upr = link_inv(fit + qt(1 - p, df) * se.fit),
-           fit = link_inv(fit)) |> 
-    select(- se.fit)
-}
-
-
-step1 <- function(col_id = 6, ci = .95, interval = c(.01, 1e3),
+step1 <- function(data, col_id = 6, ci = .95, interval = c(.01, 1e3),
                   n_beta = 100, n_Bern = 100, ...) {
-  dat <- filter(hfmd, collection == col_id)
-# 1. unconstrained binomial GAM:
-  mod <- gam(pos ~ s(age), binomial, dat)
-# 2. prediction + confidence interval:
-  mod |> 
-    predict(list(age = age_values), se.fit = TRUE) |> 
-    magrittr::extract(c("fit", "se.fit")) %>%
-    c(list(age = age_values), .) |>
-    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)), ci) |> 
-# 3. convert predictions into parameters of a beta distribution:
+# 1. age profile (prediction + confidence interval):
+  age_profile(data, col_id, ci) |> 
+# 2. convert predictions into parameters of a beta distribution:
     mutate(est = pmap(list(lwr, upr, fit), beta_parameters, ci, interval, ...)) |> 
     unnest_wider(est) |> 
-# 4. generate rate values from the beta distribution:
+# 3. generate rate values from the beta distribution:
     mutate(seroprevalence = map2(alpha, beta, ~ rbeta(n_beta, .x, .y)),
-# 5. generate Bernoulli realizations from each rate value:
+# 4. generate Bernoulli realizations from each rate value:
            seropositivity = map(seroprevalence, ~ map(.x, ~ rbinom(n_Bern, 1, .x))))
 }
 ```
-
 
 Simulations step 1 (< 3"):
 
 ```{r eval = FALSE}
 simulations_step_1 <- samples_collections |>
-  map(step1) |> 
+#  map(step1) |> 
+  map(step1, data = hfmd) |> 
   bind_rows(.id = "collection") |> 
   select(collection, age, seropositivity) |> 
   mutate(across(collection, as.integer),
@@ -292,7 +309,8 @@ if (file_exists("simulations_step_1.rds")) {
   simulations_step_1 <- readRDS2("simulations_step_1.rds")
 } else {
   simulations_step_1 <- samples_collections |>
-    map(step1) |> 
+#  map(step1) |> 
+    map(step1, data = hfmd) |> 
     bind_rows(.id = "collection") |> 
     select(collection, age, seropositivity) |> 
     mutate(across(collection, as.integer),
@@ -305,31 +323,24 @@ if (file_exists("simulations_step_1.rds")) {
 
 Step 2a:
 
-```{r eval = FALSE, include = FALSE}
+```{r include = FALSE, eval = FALSE}
 step2a <- function(age_val, ci = .95) {
-  p <- (1 - ci) / 2
   dat <- filter(simulations_step_1, age == age_val)
 # 1. monotonously increasing constrained binomial GAM:
   mod <- scam(seropositivity ~ s(collection_time, bs = "mpi"), binomial, dat)
 # 2. prediction + confidence interval:
-  df <- nrow(dat) - length(coef(mod))
-  link_inv <- family(mod)$linkinv
   mod |> 
     predict(list(collection_time = mean_collection_times), se.fit = TRUE) |> 
     magrittr::extract(c("fit", "se.fit")) %>%
     c(list(collection_time = mean_collection_times,
            collection      = samples_collections), .) |>
-    as_tibble() |> 
-    mutate(lwr = link_inv(fit + qt(    p, df) * se.fit),
-           upr = link_inv(fit + qt(1 - p, df) * se.fit),
-           fit = link_inv(fit)) |> 
-    select(- se.fit)
+    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)), ci)
 }
 ```
 
 ```{r}
-step2a <- function(age_val, ci = .95) {
-  dat <- filter(simulations_step_1, age == age_val)
+step2a <- function(data, age_val, ci = .95) {
+  dat <- filter(data, age == age_val)
 # 1. monotonously increasing constrained binomial GAM:
   mod <- scam(seropositivity ~ s(collection_time, bs = "mpi"), binomial, dat)
 # 2. prediction + confidence interval:
@@ -346,8 +357,9 @@ takes about 10':
 
 ```{r eval = FALSE}
 simulations_step_2a <- age_values |>
-  mclapply2(step2a) |> 
-  bind_rows(.id = "age_index") |>                     # do we need to keep age_index?
+#  mclapply2(step2a) |> 
+  mclapply2(step2a, data = simulations_step_1) |> 
+  bind_rows(.id = "age_index") |>
   mutate(age = age_values[as.integer(age_index)]) |> 
   select(- age_index)
 ```
@@ -357,7 +369,8 @@ if (file_exists("simulations_step_2a.rds")) {
   simulations_step_2a <- readRDS2("simulations_step_2a.rds")
 } else {
   simulations_step_2a <- age_values |>
-    mclapply2(step2a) |> 
+#  mclapply2(step2a) |> 
+  mclapply2(step2a, data = simulations_step_1) |> 
     bind_rows(.id = "age_index") |> 
     mutate(age = age_values[as.integer(age_index)]) |> 
     select(- age_index)
@@ -369,17 +382,16 @@ Step 2b:
 
 ```{r include = FALSE, eval = FALSE}
 step2b <- function(col_id = 6) {
-  dat <- filter(simulations_step_2a, collection == col_id)
-  dat$fit <- predict(gam(fit ~ s(age), betar, dat), type = "response")
-  dat$upr <- predict(gam(upr ~ s(age), betar, dat), type = "response")
-  dat$lwr <- predict(gam(lwr ~ s(age), betar, dat), type = "response")
-  dat
+  simulations_step_2a |>
+    filter(collection == col_id) |>
+    mutate(across(c(fit, upr, lwr),
+                  ~ predict(gam(.x ~ s(age), betar), type = "response")))
 }
 ```
 
 ```{r}
-step2b <- function(col_id = 6) {
-  simulations_step_2a |>
+step2b <- function(data, col_id = 6) {
+  data |>
     filter(collection == col_id) |>
     mutate(across(c(fit, upr, lwr),
                   ~ predict(gam(.x ~ s(age), betar), type = "response")))
@@ -389,18 +401,16 @@ step2b <- function(col_id = 6) {
 Smoothing step 2b:
 
 ```{r eval = FALSE}
-smoothed_step_2b <- samples_collections |> 
-  map(step2b) |> 
-  bind_rows()
+#smoothed_step_2b <- map(samples_collections, step2b)
+smoothed_step_2b <- map(samples_collections, step2b, data = simulations_step_2a)
 ```
 
 ```{r include = FALSE}
 if (file_exists("smoothed_step_2b.rds")) {
   smoothed_step_2b <- readRDS2("smoothed_step_2b.rds")
 } else {
-  smoothed_step_2b <- samples_collections |> 
-    map(step2b) |> 
-    bind_rows()
+#  smoothed_step_2b <- map(samples_collections, step2b)
+  smoothed_step_2b <- map(samples_collections, step2b, data = simulations_step_2a)
   saveRDS2(smoothed_step_2b, "smoothed_step_2b.rds")
 }
 ```
@@ -408,13 +418,94 @@ if (file_exists("smoothed_step_2b.rds")) {
 Plots:
 
 ```{r}
-plot(NA, xlim = c(0, 15), ylim = 0:1, xlab = "age (years)", ylab = "sero-prevalence")
-walk2(samples_collections, 1:4,
-      ~ smoothed_step_2b |> 
-        filter(collection == .x) |> 
-        with({
-          polygon2(age, lwr, upr, col = adjustcolor(.y, .2))
-          lines(age, fit, col = .y)
-        }))
+plot_profiles(smoothed_step_2b)
+```
+
+### Pipeline
+
+```{r}
+#age_profile_p <- function(data, col_id, ci = .95) {
+#  dat <- filter(data, collection == col_id)
+#  mod <- gam(pos ~ s(age), binomial, dat)
+#  mod |> 
+#    predict(list(age = age_values), se.fit = TRUE) %>%
+#    c(list(age = age_values), .) |> 
+#    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)))
+#}
+#
+#
+#step1_p <- function(data, col_id = 6, ci = .95, interval = c(.01, 1e3),
+#                  n_beta = 100, n_Bern = 100, ...) {
+## 1. age profile (prediction + confidence interval):
+#  age_profile_p(data, col_id, ci) |> 
+## 2. convert predictions into parameters of a beta distribution:
+#    mutate(est = pmap(list(lwr, upr, fit), beta_parameters, ci, interval, ...)) |> 
+#    unnest_wider(est) |> 
+## 3. generate rate values from the beta distribution:
+#    mutate(seroprevalence = map2(alpha, beta, ~ rbeta(n_beta, .x, .y)),
+## 4. generate Bernoulli realizations from each rate value:
+#           seropositivity = map(seroprevalence, ~ map(.x, ~ rbinom(n_Bern, 1, .x))))
+#}
+#
+#
+#step2a_p <- function(data, age_val, ci = .95) {
+#  dat <- filter(data, age == age_val)
+## 1. monotonously increasing constrained binomial GAM:
+#  mod <- scam(seropositivity ~ s(collection_time, bs = "mpi"), binomial, dat)
+## 2. prediction + confidence interval:
+#  mod |> 
+#    predict(list(collection_time = mean_collection_times), se.fit = TRUE) |> 
+#    magrittr::extract(c("fit", "se.fit")) %>%
+#    c(list(collection_time = mean_collection_times,
+#           collection      = samples_collections), .) |>
+#    pred2table(family(mod)$linkinv, nrow(dat) - length(coef(mod)), ci)
+#}
+#
+#
+#step2b_p <- function(data, col_id = 6) {
+#  data |>
+#    filter(collection == col_id) |>
+#    mutate(across(c(fit, upr, lwr),
+#                  ~ predict(gam(.x ~ s(age), betar), type = "response")))
+#}
+
+
+pipeline <- function(data) {
+  data %>%
+# Step 1:
+    map(samples_collections, step1, data = .) |>
+    bind_rows(.id = "collection") |> 
+    select(collection, age, seropositivity) |> 
+    mutate(across(collection, as.integer),
+           collection_time = mean_collection_times[collection]) |> 
+    unnest(seropositivity) |> 
+    unnest(seropositivity) %>%
+# Step 2a:
+    mclapply2(age_values, step2a, data = .) |>
+    bind_rows(.id = "age_index") |>
+    mutate(age = age_values[as.integer(age_index)]) |> 
+    select(- age_index) %>%
+# Step 2b:
+    map(samples_collections, step2b, data = .)
+}
+```
+
+Take 12'
+
+```{r eval = FALSE}
+pipeline_output <- pipeline(hfmd)
+```
+
+```{r include = FALSE}
+if (file_exists("pipeline_output.rds")) {
+  pipeline_output <- readRDS2("pipeline_output.rds")
+} else {
+  pipeline_output <- pipeline(hfmd)
+  saveRDS2(pipeline_output, "pipeline_output.rds")
+}
+```
+
+```{r}
+plot_profiles(pipeline_output)
 ```
 
