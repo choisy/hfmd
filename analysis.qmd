@@ -64,6 +64,16 @@ A tuning of the `predict()` generic:
 predict2 <- function(...) predict(..., type = "response") |> as.vector()
 ```
 
+A function that shifts the values of the vector `x` by `n` positions to the right,
+keeping the length of the vector constant and filling the first `n` positions of the
+vector with `NA` values:
+
+```{r}
+shift_right <- function(n, x) {
+  if (n < 1) return(x)
+  c(rep(NA, n), head(x, -n))
+}
+```
 
 
 ## Loading the data
@@ -200,9 +210,9 @@ A function that computes a sero-prevalence age profile with confidence interval 
 each of the collections of a dataset, with a temporal constraint between the
 collections:
 
-```{r include=FALSE, eval=FALSE}
-age_profile_constrained0 <- function(data, age_values = seq(0, 15, le = 512), ci = .95,
-                                    n = 100) {
+```{r}
+age_profile_constrained <- function(data, age_values = seq(0, 15, le = 512),
+                                    ci = .95, n = 100) {
   mean_collection_times <- data |> 
     group_by(collection) |> 
     summarise(mean_col_date = mean(col_date2)) |> 
@@ -237,241 +247,6 @@ age_profile_constrained0 <- function(data, age_values = seq(0, 15, le = 512), ci
     group_split()
 }
 ```
-
-```{r}
-age_profile_constrained <- function(data, age_values = seq(0, 15, le = 512), ci = .95,
-                                    n = 100) {
-  mean_collection_times <- data |> 
-    group_by(collection) |> 
-    summarise(mean_col_date = mean(col_date2)) |> 
-    with(setNames(mean_col_date, collection))
-  
-  data |> 
-# Step 1:
-    group_by(collection) |> 
-    group_modify(~ .x |>
-                   age_profile(age_values, ci) |> 
-                   mutate(across(c(fit, lwr, upr), ~ map(.x, ~ rbinom(n, 1, .x))))) |> 
-    ungroup() |> 
-    mutate(collection_time = mean_collection_times[as.character(collection)]) |> 
-    unnest(c(fit, lwr, upr)) |>
-    pivot_longer(c(fit, lwr, upr), names_to = "line", values_to = "seropositvty") |> 
-# Step 2a:
-    group_by(age, line) |> 
-    group_modify(~ .x %>%
-                   scam(seropositvty ~ s(collection_time, bs = "mpi"), binomial, .) |> 
-                   predict2(list(collection_time = mean_collection_times)) %>%
-                   tibble(collection_time = mean_collection_times,
-                          seroprevalence  = .)) |> 
-    ungroup() |> 
-# Step 2b:
-    group_by(collection_time, line) |> 
-    group_modify(~ .x |>
-                   mutate(across(seroprevalence, ~ gam(.x ~ s(age), betar) |> 
-                                                   predict2()))) |> 
-    ungroup() |> 
-    pivot_wider(names_from = line, values_from = seroprevalence) |> 
-    group_by(collection_time) |> 
-    group_split()
-}
-```
-
-
-```{r}
-step1 <- function(data, age_values = seq(0, 15, le = 512), ci = .95,
-                                    n = 100) {
-  mean_collection_times <- data |> 
-    group_by(collection) |> 
-    summarise(mean_col_date = mean(col_date2)) |> 
-    with(setNames(mean_col_date, collection))
-  
-  data |> 
-# Step 1:
-    group_by(collection) |> 
-    group_modify(~ .x |>
-                   age_profile(age_values, ci) |> 
-                   mutate(across(c(fit, lwr, upr), ~ map(.x, ~ rbinom(n, 1, .x))))) |> 
-    ungroup() |> 
-    mutate(collection_time = mean_collection_times[as.character(collection)]) |> 
-    unnest(c(fit, lwr, upr)) |>
-    pivot_longer(c(fit, lwr, upr), names_to = "line", values_to = "seropositvty")
-}
-
-step1output <- step1(hfmd)
-```
-
-```{r}
-make_shifts <- function(collection_time, collection_id, age_values) {
-  aging <- setNames(cumsum(c(0, diff(mean_collection_times) / 365)),
-                    names(mean_collection_times))
-  round(aging / mean(diff(age_values)))
-}
-
-with(step1output, make_shifts(collection_time, collection, age))
-```
-
-```{r}
-shift_right <- function(n, x) {
-  if (n < 1) return(x)
-  c(rep(NA, n), head(x, -n))
-}
-
-shift_right(0, 1:10)
-```
-
-```{r}
-add_column <- function(x, y) {
-  x$age2 <- y
-  x
-}
-```
-
-
-```{r}
-step1b <- function(data, age_values = seq(0, 15, le = 512), ci = .95, n = 100) {
-  mean_collection_times <- data |> 
-    group_by(collection) |> 
-    summarise(mean_col_date = mean(col_date2)) |> 
-    with(setNames(mean_col_date, collection))
-  
-  age2s <- cumsum(c(0, diff(mean_collection_times))) |>
-    divide_by(365 * mean(diff(age_values))) |> 
-    round() |> 
-    map(shift_right, age_values)
-    
-  data |> 
-## Step 1:
-    mutate(coll2 = collection) |> 
-    group_by(collection) |> 
-    group_modify(~ .x |>
-                   age_profile(age_values, ci) |> 
-                   mutate(across(c(fit, lwr, upr), ~ map(.x, ~ rbinom(n, 1, .x))))) |> 
-    ungroup() |> 
-    mutate(coll2 = as.character(collection)) |> 
-    group_by(collection) |> 
-    group_split() |> 
-    map2(age2s, add_column) |> 
-    bind_rows() |> 
-    mutate(collection_time = mean_collection_times[coll2]) #|> 
-#    unnest(c(fit, lwr, upr)) |>
-#    pivot_longer(c(fit, lwr, upr), names_to = "line", values_to = "seropositvty")
-}
-
-(a <- step1b(hfmd))
-```
-
-```{r}
-step1c <- function(data, age_values = seq(0, 15, le = 512), ci = .95, n = 100) {
-  mean_collection_times <- data |> 
-    group_by(collection) |> 
-    summarise(mean_col_date = mean(col_date2)) |> 
-    with(setNames(mean_col_date, collection))
-  
-  cohorts <- cumsum(c(0, diff(mean_collection_times))) |>
-    divide_by(365 * mean(diff(age_values))) |> 
-    round() |> 
-    map(shift_right, age_values)
-  
-  age_time <- map2(mean_collection_times, cohorts,
-                   ~ tibble(collection_time = .x, cohort = .y))
-    
-  data |> 
-## Step 1:
-    group_by(collection) |> 
-    group_modify(~ .x |>
-                   age_profile(age_values, ci) |> 
-                   mutate(across(c(fit, lwr, upr), ~ map(.x, ~ rbinom(n, 1, .x))))) |>
-    group_split() |> 
-    map2(age_time, bind_cols) |> 
-    bind_rows() |> 
-    unnest(c(fit, lwr, upr)) |>
-    pivot_longer(c(fit, lwr, upr), names_to = "line", values_to = "seropositvty")
-}
-
-(a <- step1c(hfmd))
-```
-
-
-
-
-```{r}
-seq2 <- function(from, to, n, digits) {
-  seq(0, by = round(mean(diff(seq(from, to, length = n))), digits), length = n + 1)
-}
-
-seq2(0, 15, 512, 3) |> diff() |> unique()
-from <- 0
-to <- 15
-n <- 512
-digits <- 3
-```
-
-A function that shifts the values of a vector to the right:
-
-
-```{r}
-make_shifts <- function(collection_time, collection_id, age_values) {
-  collection_time |> 
-    unique() |> 
-    diff() %>%
-    c(0, .) |> 
-    cumsum() |> 
-    divide_by(365 * mean(diff(age_values))) |> 
-    round() |> 
-    setNames(unique(collection_id))
-}
-
-with(step1output, make_shifts(collection_time, collection, age))
-```
-
-
-
-```{r}
-correct_age <- function(x) {
-  shifts <- with(x, f(collection_time, collection, age))
-  mutate(x, age2 = shift_right(age_values, shifts[x$collection]))
-}
-
-correct_age(step1output)
-```
-
-
-
-```{r}
-age_values <- seq(0, 15, le = 512)
-
-
-
-aging <- setNames(cumsum(c(0, diff(unique(step1output$collection_time)) / 365)),
-                  unique(step1output$collection))
-
-round(aging / mean(diff(age_values)))
-
-
-
-
-
-
-a <- step1output %>%
-  mutate(age2 = age + setNames(cumsum(c(0, diff(unique(collection_time)) / 365)),
-                               unique(collection))[as.character(collection)])
-
-a |> filter(collection == 7) |> 
-  select(age, age2) |> 
-  unique()
-```
-
-
-
-
-
-
-
-
-
-
-
-
 
 Computing a sero-prevalence age profile with confidence interval for each of the
 collections, with a temporal constraint between the collections(takes 1'20"):
@@ -495,9 +270,104 @@ Plotting the sero-prevalence age profiles with temporal constraint between colle
 plot_profiles(constrained_age_profiles)
 ```
 
+
 ## Correcting for aging
 
-```{r}
+Here we want to apply the constraint by accounting for the fact that age increases
+between samples collection. This means that the above Step 2a needs to be adjusted
+accordingly. More specifically, the monotonically increasing binomial GAM should not be
+applied for each age value, but for each cohort, a cohort being defined by a given age
+in the first collection time. The code below is the above function
+`age_profile_constrained_cohort()` that has been adapted accordingly. For easier
+comparison, we've left the old code:
 
+```{r}
+age_profile_constrained_cohort <- function(data, age_values = seq(0, 15, le = 512),
+                                           ci = .95, n = 100) {
+  mean_collection_times <- data |> 
+    group_by(collection) |> 
+    summarise(mean_col_date = mean(col_date2)) |> 
+    with(setNames(mean_col_date, collection))
+  
+#START#################################################################################
+# Code to translate age and collection time into cohort and vice versa:
+  cohorts <- cumsum(c(0, diff(mean_collection_times))) |>
+    divide_by(365 * mean(diff(age_values))) |> 
+    round() |> 
+    map(shift_right, age_values)
+  
+  age_time <- map2(mean_collection_times, cohorts,
+                   ~ tibble(collection_time = .x, cohort = .y))
+  
+  age_time_inv <- age_time |> 
+    map(~ cbind(.x, age = age_values)) |> 
+    bind_rows() |> 
+    na.exclude()
+#END###################################################################################
+  data |> 
+# Step 1:
+    group_by(collection) |> 
+    group_modify(~ .x |>
+                   age_profile(age_values, ci) |> 
+                   mutate(across(c(fit, lwr, upr), ~ map(.x, ~ rbinom(n, 1, .x))))) |> 
+#START#################################################################################
+# First modification:
+#    ungroup() |> 
+#    mutate(collection_time = mean_collection_times[as.character(collection)]) |> 
+    group_split() |> 
+    map2(age_time, bind_cols) |> 
+    bind_rows() |> 
+#END###################################################################################
+    unnest(c(fit, lwr, upr)) |>
+    pivot_longer(c(fit, lwr, upr), names_to = "line", values_to = "seropositvty") |> 
+# Step 2a:
+#START#################################################################################
+# Second modification:
+#    group_by(age, line) |>  
+    filter(cohort < max(age) - diff(range(mean_collection_times)) / 365) |>
+    group_by(cohort, line) |> 
+#END###################################################################################
+    group_modify(~ .x %>%
+                   scam(seropositvty ~ s(collection_time, bs = "mpi"), binomial, .) |> 
+                   predict2(list(collection_time = mean_collection_times)) %>%
+                   tibble(collection_time = mean_collection_times,
+                          seroprevalence  = .)) |> 
+    ungroup() |> 
+# Step 2b:
+#START#################################################################################
+# Third modification:  
+    left_join(age_time_inv, by = c("cohort", "collection_time")) |> 
+#END###################################################################################
+    group_by(collection_time, line) |> 
+    group_modify(~ .x |>
+                   mutate(across(seroprevalence, ~ gam(.x ~ s(age), betar) |> 
+                                                   predict2()))) |> 
+    ungroup() |> 
+    pivot_wider(names_from = line, values_from = seroprevalence) |> 
+    group_by(collection_time) |> 
+    group_split()
+}
+```
+
+Computing the new sero-prevalence profile (taking another 1'20"):
+
+```{r eval = FALSE}
+constrained_age_profiles_cohort <- age_profile_constrained_cohort(hfmd)
+```
+
+```{r include = FALSE}
+if (file_exists("constrained_age_profiles_cohort.rds")) {
+  constrained_age_profiles_cohort <- readRDS2("constrained_age_profiles_cohort.rds")
+} else {
+  constrained_age_profiles_cohort <- age_profile_constrained_cohort(hfmd)
+  saveRDS2(constrained_age_profiles_cohort, "constrained_age_profiles_cohort.rds")
+}
+```
+
+Plotting the sero-prevalence age profiles with temporal constraint between collections,
+**across cohort**:
+
+```{r}
+plot_profiles(constrained_age_profiles_cohort)
 ```
 
