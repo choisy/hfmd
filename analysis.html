@@ -90,7 +90,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#algorithm" id="toc-algorithm" class="nav-link" data-scroll-target="#algorithm"><span class="header-section-number">6.2</span> Algorithm</a></li>
   <li><a href="#implementation" id="toc-implementation" class="nav-link" data-scroll-target="#implementation"><span class="header-section-number">6.3</span> Implementation</a></li>
   </ul></li>
-  <li><a href="#correcting-for-aging" id="toc-correcting-for-aging" class="nav-link" data-scroll-target="#correcting-for-aging"><span class="header-section-number">7</span> Correcting for aging</a></li>
+  <li><a href="#correcting-for-aging" id="toc-correcting-for-aging" class="nav-link" data-scroll-target="#correcting-for-aging"><span class="header-section-number">7</span> Correcting for aging</a>
+  <ul class="collapse">
+  <li><a href="#with-extrapolation" id="toc-with-extrapolation" class="nav-link" data-scroll-target="#with-extrapolation"><span class="header-section-number">7.1</span> With extrapolation</a></li>
+  </ul></li>
   </ul>
 </nav>
 </div>
@@ -353,49 +356,51 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb18-20"><a href="#cb18-20" aria-hidden="true" tabindex="-1"></a>    <span class="fu">bind_rows</span>() <span class="sc">|&gt;</span> </span>
 <span id="cb18-21"><a href="#cb18-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">na.exclude</span>()</span>
 <span id="cb18-22"><a href="#cb18-22" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
-<span id="cb18-23"><a href="#cb18-23" aria-hidden="true" tabindex="-1"></a>  data <span class="sc">|&gt;</span> </span>
-<span id="cb18-24"><a href="#cb18-24" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 1:</span></span>
-<span id="cb18-25"><a href="#cb18-25" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection) <span class="sc">|&gt;</span> </span>
-<span id="cb18-26"><a href="#cb18-26" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
-<span id="cb18-27"><a href="#cb18-27" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">age_profile</span>(age_values, ci) <span class="sc">|&gt;</span> </span>
-<span id="cb18-28"><a href="#cb18-28" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="sc">~</span> <span class="fu">map</span>(.x, <span class="sc">~</span> <span class="fu">rbinom</span>(n, <span class="dv">1</span>, .x))))) <span class="sc">|&gt;</span> </span>
-<span id="cb18-29"><a href="#cb18-29" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
-<span id="cb18-30"><a href="#cb18-30" aria-hidden="true" tabindex="-1"></a><span class="co"># First modification:</span></span>
-<span id="cb18-31"><a href="#cb18-31" aria-hidden="true" tabindex="-1"></a><span class="co">#    ungroup() |&gt; </span></span>
-<span id="cb18-32"><a href="#cb18-32" aria-hidden="true" tabindex="-1"></a><span class="co">#    mutate(collection_time = mean_collection_times[as.character(collection)]) |&gt; </span></span>
-<span id="cb18-33"><a href="#cb18-33" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>() <span class="sc">|&gt;</span> </span>
-<span id="cb18-34"><a href="#cb18-34" aria-hidden="true" tabindex="-1"></a>    <span class="fu">map2</span>(age_time, bind_cols) <span class="sc">|&gt;</span> </span>
-<span id="cb18-35"><a href="#cb18-35" aria-hidden="true" tabindex="-1"></a>    <span class="fu">bind_rows</span>() <span class="sc">|&gt;</span> </span>
-<span id="cb18-36"><a href="#cb18-36" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
-<span id="cb18-37"><a href="#cb18-37" aria-hidden="true" tabindex="-1"></a>    <span class="fu">unnest</span>(<span class="fu">c</span>(fit, lwr, upr)) <span class="sc">|&gt;</span></span>
-<span id="cb18-38"><a href="#cb18-38" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_longer</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="at">names_to =</span> <span class="st">"line"</span>, <span class="at">values_to =</span> <span class="st">"seropositvty"</span>) <span class="sc">|&gt;</span> </span>
-<span id="cb18-39"><a href="#cb18-39" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2a:</span></span>
-<span id="cb18-40"><a href="#cb18-40" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
-<span id="cb18-41"><a href="#cb18-41" aria-hidden="true" tabindex="-1"></a><span class="co"># Second modification:</span></span>
-<span id="cb18-42"><a href="#cb18-42" aria-hidden="true" tabindex="-1"></a><span class="co">#    group_by(age, line) |&gt;  </span></span>
-<span id="cb18-43"><a href="#cb18-43" aria-hidden="true" tabindex="-1"></a>    <span class="fu">filter</span>(cohort <span class="sc">&lt;</span> <span class="fu">max</span>(age) <span class="sc">-</span> <span class="fu">diff</span>(<span class="fu">range</span>(mean_collection_times)) <span class="sc">/</span> <span class="dv">365</span>) <span class="sc">|&gt;</span></span>
-<span id="cb18-44"><a href="#cb18-44" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(cohort, line) <span class="sc">|&gt;</span> </span>
-<span id="cb18-45"><a href="#cb18-45" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
-<span id="cb18-46"><a href="#cb18-46" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">%&gt;%</span></span>
-<span id="cb18-47"><a href="#cb18-47" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">scam</span>(seropositvty <span class="sc">~</span> <span class="fu">s</span>(collection_time, <span class="at">bs =</span> <span class="st">"mpi"</span>), binomial, .) <span class="sc">|&gt;</span> </span>
-<span id="cb18-48"><a href="#cb18-48" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">predict2</span>(<span class="fu">list</span>(<span class="at">collection_time =</span> mean_collection_times)) <span class="sc">%&gt;%</span></span>
-<span id="cb18-49"><a href="#cb18-49" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">tibble</span>(<span class="at">collection_time =</span> mean_collection_times,</span>
-<span id="cb18-50"><a href="#cb18-50" aria-hidden="true" tabindex="-1"></a>                          <span class="at">seroprevalence  =</span> .)) <span class="sc">|&gt;</span> </span>
-<span id="cb18-51"><a href="#cb18-51" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
-<span id="cb18-52"><a href="#cb18-52" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2b:</span></span>
-<span id="cb18-53"><a href="#cb18-53" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
-<span id="cb18-54"><a href="#cb18-54" aria-hidden="true" tabindex="-1"></a><span class="co"># Third modification:  </span></span>
-<span id="cb18-55"><a href="#cb18-55" aria-hidden="true" tabindex="-1"></a>    <span class="fu">left_join</span>(age_time_inv, <span class="at">by =</span> <span class="fu">c</span>(<span class="st">"cohort"</span>, <span class="st">"collection_time"</span>)) <span class="sc">|&gt;</span> </span>
-<span id="cb18-56"><a href="#cb18-56" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
-<span id="cb18-57"><a href="#cb18-57" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time, line) <span class="sc">|&gt;</span> </span>
-<span id="cb18-58"><a href="#cb18-58" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
-<span id="cb18-59"><a href="#cb18-59" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(seroprevalence, <span class="sc">~</span> <span class="fu">gam</span>(.x <span class="sc">~</span> <span class="fu">s</span>(age), betar) <span class="sc">|&gt;</span> </span>
-<span id="cb18-60"><a href="#cb18-60" aria-hidden="true" tabindex="-1"></a>                                                   <span class="fu">predict2</span>()))) <span class="sc">|&gt;</span> </span>
-<span id="cb18-61"><a href="#cb18-61" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
-<span id="cb18-62"><a href="#cb18-62" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_wider</span>(<span class="at">names_from =</span> line, <span class="at">values_from =</span> seroprevalence) <span class="sc">|&gt;</span> </span>
-<span id="cb18-63"><a href="#cb18-63" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time) <span class="sc">|&gt;</span> </span>
-<span id="cb18-64"><a href="#cb18-64" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>()</span>
-<span id="cb18-65"><a href="#cb18-65" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb18-23"><a href="#cb18-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-24"><a href="#cb18-24" aria-hidden="true" tabindex="-1"></a>  data <span class="sc">|&gt;</span> </span>
+<span id="cb18-25"><a href="#cb18-25" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 1:</span></span>
+<span id="cb18-26"><a href="#cb18-26" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection) <span class="sc">|&gt;</span> </span>
+<span id="cb18-27"><a href="#cb18-27" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
+<span id="cb18-28"><a href="#cb18-28" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">age_profile</span>(age_values, ci) <span class="sc">|&gt;</span> </span>
+<span id="cb18-29"><a href="#cb18-29" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="sc">~</span> <span class="fu">map</span>(.x, <span class="sc">~</span> <span class="fu">rbinom</span>(n, <span class="dv">1</span>, .x))))) <span class="sc">|&gt;</span> </span>
+<span id="cb18-30"><a href="#cb18-30" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
+<span id="cb18-31"><a href="#cb18-31" aria-hidden="true" tabindex="-1"></a><span class="co"># First modification:</span></span>
+<span id="cb18-32"><a href="#cb18-32" aria-hidden="true" tabindex="-1"></a><span class="co">#    ungroup() |&gt; </span></span>
+<span id="cb18-33"><a href="#cb18-33" aria-hidden="true" tabindex="-1"></a><span class="co">#    mutate(collection_time = mean_collection_times[as.character(collection)]) |&gt; </span></span>
+<span id="cb18-34"><a href="#cb18-34" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb18-35"><a href="#cb18-35" aria-hidden="true" tabindex="-1"></a>    <span class="fu">map2</span>(age_time, bind_cols) <span class="sc">|&gt;</span> </span>
+<span id="cb18-36"><a href="#cb18-36" aria-hidden="true" tabindex="-1"></a>    <span class="fu">bind_rows</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb18-37"><a href="#cb18-37" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
+<span id="cb18-38"><a href="#cb18-38" aria-hidden="true" tabindex="-1"></a>    <span class="fu">unnest</span>(<span class="fu">c</span>(fit, lwr, upr)) <span class="sc">|&gt;</span></span>
+<span id="cb18-39"><a href="#cb18-39" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_longer</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="at">names_to =</span> <span class="st">"line"</span>, <span class="at">values_to =</span> <span class="st">"seropositvty"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb18-40"><a href="#cb18-40" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2a:</span></span>
+<span id="cb18-41"><a href="#cb18-41" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
+<span id="cb18-42"><a href="#cb18-42" aria-hidden="true" tabindex="-1"></a><span class="co"># Second modification:</span></span>
+<span id="cb18-43"><a href="#cb18-43" aria-hidden="true" tabindex="-1"></a><span class="co">#    group_by(age, line) |&gt;  </span></span>
+<span id="cb18-44"><a href="#cb18-44" aria-hidden="true" tabindex="-1"></a>    <span class="fu">filter</span>(cohort <span class="sc">&lt;</span> <span class="fu">max</span>(age) <span class="sc">-</span> <span class="fu">diff</span>(<span class="fu">range</span>(mean_collection_times)) <span class="sc">/</span> <span class="dv">365</span>) <span class="sc">|&gt;</span></span>
+<span id="cb18-45"><a href="#cb18-45" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(cohort, line) <span class="sc">|&gt;</span> </span>
+<span id="cb18-46"><a href="#cb18-46" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
+<span id="cb18-47"><a href="#cb18-47" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">%&gt;%</span></span>
+<span id="cb18-48"><a href="#cb18-48" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">scam</span>(seropositvty <span class="sc">~</span> <span class="fu">s</span>(collection_time, <span class="at">bs =</span> <span class="st">"mpi"</span>), binomial, .) <span class="sc">|&gt;</span> </span>
+<span id="cb18-49"><a href="#cb18-49" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">predict2</span>(<span class="fu">list</span>(<span class="at">collection_time =</span> mean_collection_times)) <span class="sc">%&gt;%</span></span>
+<span id="cb18-50"><a href="#cb18-50" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">tibble</span>(<span class="at">collection_time =</span> mean_collection_times,</span>
+<span id="cb18-51"><a href="#cb18-51" aria-hidden="true" tabindex="-1"></a>                          <span class="at">seroprevalence  =</span> .)) <span class="sc">|&gt;</span> </span>
+<span id="cb18-52"><a href="#cb18-52" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb18-53"><a href="#cb18-53" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2b:</span></span>
+<span id="cb18-54"><a href="#cb18-54" aria-hidden="true" tabindex="-1"></a><span class="co">#START#################################################################################</span></span>
+<span id="cb18-55"><a href="#cb18-55" aria-hidden="true" tabindex="-1"></a><span class="co"># Third modification:  </span></span>
+<span id="cb18-56"><a href="#cb18-56" aria-hidden="true" tabindex="-1"></a>    <span class="fu">left_join</span>(age_time_inv, <span class="fu">c</span>(<span class="st">"cohort"</span>, <span class="st">"collection_time"</span>)) <span class="sc">|&gt;</span> </span>
+<span id="cb18-57"><a href="#cb18-57" aria-hidden="true" tabindex="-1"></a><span class="co">#</span><span class="re">END</span><span class="co">###################################################################################</span></span>
+<span id="cb18-58"><a href="#cb18-58" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time, line) <span class="sc">|&gt;</span> </span>
+<span id="cb18-59"><a href="#cb18-59" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
+<span id="cb18-60"><a href="#cb18-60" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(seroprevalence,</span>
+<span id="cb18-61"><a href="#cb18-61" aria-hidden="true" tabindex="-1"></a>                                 <span class="sc">~</span> <span class="fu">gam</span>(.x <span class="sc">~</span> <span class="fu">s</span>(age), betar) <span class="sc">|&gt;</span></span>
+<span id="cb18-62"><a href="#cb18-62" aria-hidden="true" tabindex="-1"></a>                                   <span class="fu">predict2</span>()))) <span class="sc">|&gt;</span></span>
+<span id="cb18-63"><a href="#cb18-63" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb18-64"><a href="#cb18-64" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_wider</span>(<span class="at">names_from =</span> line, <span class="at">values_from =</span> seroprevalence) <span class="sc">|&gt;</span> </span>
+<span id="cb18-65"><a href="#cb18-65" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time) <span class="sc">|&gt;</span> </span>
+<span id="cb18-66"><a href="#cb18-66" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>()</span>
+<span id="cb18-67"><a href="#cb18-67" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
 <p>Computing the new sero-prevalence profile (taking another 1’20”):</p>
 <div class="cell">
@@ -412,6 +417,81 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 </div>
 </div>
+<section id="with-extrapolation" class="level3" data-number="7.1">
+<h3 data-number="7.1" class="anchored" data-anchor-id="with-extrapolation"><span class="header-section-number">7.1</span> With extrapolation</h3>
+<p>Here is an alternative version of the above <code>age_profile_constrained_cohort()</code> function that performs extrapolation over the whole age range for each time point. Same as before, we highlight the code changes in step 2b:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>age_profile_constrained_cohort2 <span class="ot">&lt;-</span> <span class="cf">function</span>(data, <span class="at">age_values =</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">15</span>, <span class="at">le =</span> <span class="dv">512</span>),</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>                                           <span class="at">ci =</span> .<span class="dv">95</span>, <span class="at">n =</span> <span class="dv">100</span>) {</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>  mean_collection_times <span class="ot">&lt;-</span> data <span class="sc">|&gt;</span> </span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection) <span class="sc">|&gt;</span> </span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>    <span class="fu">summarise</span>(<span class="at">mean_col_date =</span> <span class="fu">mean</span>(col_date2)) <span class="sc">|&gt;</span> </span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">with</span>(<span class="fu">setNames</span>(mean_col_date, collection))</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>  cohorts <span class="ot">&lt;-</span> <span class="fu">cumsum</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="fu">diff</span>(mean_collection_times))) <span class="sc">|&gt;</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">divide_by</span>(<span class="dv">365</span> <span class="sc">*</span> <span class="fu">mean</span>(<span class="fu">diff</span>(age_values))) <span class="sc">|&gt;</span> </span>
+<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">map</span>(shift_right, age_values)</span>
+<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a>  age_time <span class="ot">&lt;-</span> <span class="fu">map2</span>(mean_collection_times, cohorts,</span>
+<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a>                   <span class="sc">~</span> <span class="fu">tibble</span>(<span class="at">collection_time =</span> .x, <span class="at">cohort =</span> .y))</span>
+<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a>  age_time_inv <span class="ot">&lt;-</span> age_time <span class="sc">|&gt;</span> </span>
+<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a>    <span class="fu">map</span>(<span class="sc">~</span> <span class="fu">cbind</span>(.x, <span class="at">age =</span> age_values)) <span class="sc">|&gt;</span> </span>
+<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>    <span class="fu">bind_rows</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a>    <span class="fu">na.exclude</span>()</span>
+<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-21"><a href="#cb21-21" aria-hidden="true" tabindex="-1"></a>  data <span class="sc">|&gt;</span> </span>
+<span id="cb21-22"><a href="#cb21-22" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 1:</span></span>
+<span id="cb21-23"><a href="#cb21-23" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection) <span class="sc">|&gt;</span> </span>
+<span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
+<span id="cb21-25"><a href="#cb21-25" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">age_profile</span>(age_values, ci) <span class="sc">|&gt;</span> </span>
+<span id="cb21-26"><a href="#cb21-26" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="sc">~</span> <span class="fu">map</span>(.x, <span class="sc">~</span> <span class="fu">rbinom</span>(n, <span class="dv">1</span>, .x))))) <span class="sc">|&gt;</span> </span>
+<span id="cb21-27"><a href="#cb21-27" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-28"><a href="#cb21-28" aria-hidden="true" tabindex="-1"></a>    <span class="fu">map2</span>(age_time, bind_cols) <span class="sc">|&gt;</span> </span>
+<span id="cb21-29"><a href="#cb21-29" aria-hidden="true" tabindex="-1"></a>    <span class="fu">bind_rows</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-30"><a href="#cb21-30" aria-hidden="true" tabindex="-1"></a>    <span class="fu">unnest</span>(<span class="fu">c</span>(fit, lwr, upr)) <span class="sc">|&gt;</span></span>
+<span id="cb21-31"><a href="#cb21-31" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_longer</span>(<span class="fu">c</span>(fit, lwr, upr), <span class="at">names_to =</span> <span class="st">"line"</span>, <span class="at">values_to =</span> <span class="st">"seropositvty"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb21-32"><a href="#cb21-32" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2a:</span></span>
+<span id="cb21-33"><a href="#cb21-33" aria-hidden="true" tabindex="-1"></a>    <span class="fu">filter</span>(cohort <span class="sc">&lt;</span> <span class="fu">max</span>(age) <span class="sc">-</span> <span class="fu">diff</span>(<span class="fu">range</span>(mean_collection_times)) <span class="sc">/</span> <span class="dv">365</span>) <span class="sc">|&gt;</span></span>
+<span id="cb21-34"><a href="#cb21-34" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(cohort, line) <span class="sc">|&gt;</span> </span>
+<span id="cb21-35"><a href="#cb21-35" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">%&gt;%</span></span>
+<span id="cb21-36"><a href="#cb21-36" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">scam</span>(seropositvty <span class="sc">~</span> <span class="fu">s</span>(collection_time, <span class="at">bs =</span> <span class="st">"mpi"</span>), binomial, .) <span class="sc">|&gt;</span> </span>
+<span id="cb21-37"><a href="#cb21-37" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">predict2</span>(<span class="fu">list</span>(<span class="at">collection_time =</span> mean_collection_times)) <span class="sc">%&gt;%</span></span>
+<span id="cb21-38"><a href="#cb21-38" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">tibble</span>(<span class="at">collection_time =</span> mean_collection_times,</span>
+<span id="cb21-39"><a href="#cb21-39" aria-hidden="true" tabindex="-1"></a>                          <span class="at">seroprevalence  =</span> .)) <span class="sc">|&gt;</span> </span>
+<span id="cb21-40"><a href="#cb21-40" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-41"><a href="#cb21-41" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 2b:</span></span>
+<span id="cb21-42"><a href="#cb21-42" aria-hidden="true" tabindex="-1"></a>    <span class="fu">left_join</span>(age_time_inv, <span class="fu">c</span>(<span class="st">"cohort"</span>, <span class="st">"collection_time"</span>)) <span class="sc">|&gt;</span> </span>
+<span id="cb21-43"><a href="#cb21-43" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time, line) <span class="sc">|&gt;</span> </span>
+<span id="cb21-44"><a href="#cb21-44" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_modify</span>(<span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
+<span id="cb21-45"><a href="#cb21-45" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">right_join</span>(<span class="fu">tibble</span>(<span class="at">age =</span> age_values), <span class="st">"age"</span>) <span class="sc">|&gt;</span>          <span class="do">### added</span></span>
+<span id="cb21-46"><a href="#cb21-46" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">arrange</span>(age) <span class="sc">|&gt;</span>                                         <span class="do">### added</span></span>
+<span id="cb21-47"><a href="#cb21-47" aria-hidden="true" tabindex="-1"></a>                   <span class="fu">mutate</span>(<span class="fu">across</span>(seroprevalence,</span>
+<span id="cb21-48"><a href="#cb21-48" aria-hidden="true" tabindex="-1"></a>                                 <span class="sc">~</span> <span class="fu">gam</span>(.x <span class="sc">~</span> <span class="fu">s</span>(age), betar) <span class="sc">|&gt;</span></span>
+<span id="cb21-49"><a href="#cb21-49" aria-hidden="true" tabindex="-1"></a>                                   <span class="fu">predict2</span>(<span class="fu">list</span>(<span class="at">age =</span> age_values))))) <span class="sc">|&gt;</span>  <span class="do">### modified</span></span>
+<span id="cb21-50"><a href="#cb21-50" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ungroup</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb21-51"><a href="#cb21-51" aria-hidden="true" tabindex="-1"></a>    <span class="fu">pivot_wider</span>(<span class="at">names_from =</span> line, <span class="at">values_from =</span> seroprevalence) <span class="sc">|&gt;</span> </span>
+<span id="cb21-52"><a href="#cb21-52" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_by</span>(collection_time) <span class="sc">|&gt;</span> </span>
+<span id="cb21-53"><a href="#cb21-53" aria-hidden="true" tabindex="-1"></a>    <span class="fu">group_split</span>()</span>
+<span id="cb21-54"><a href="#cb21-54" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>Let’s compute the values (another 1’20”):</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>constrained_age_profiles_cohort2 <span class="ot">&lt;-</span> <span class="fu">age_profile_constrained_cohort2</span>(hfmd)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>And here is what the plot now looks like:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb23"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="fu">plot_profiles</span>(constrained_age_profiles_cohort2)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="analysis_files/figure-html/unnamed-chunk-25-1.png" class="img-fluid figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
 </section>
 
 </main>
