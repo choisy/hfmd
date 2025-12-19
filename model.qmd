@@ -42,3 +42,124 @@ knitr::opts_chunk$set(margin1    = TRUE,
                       fig.height = eps * 5, # default is 5
                       fig.width  = eps * 7) # default is 7 and maximum possible is 8.3
 ```
+
+## Constants
+
+The folder that contains the data files:
+
+```{r}
+path2data <- paste0("/Users/", Sys.getenv("USER"), "/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/hfmd/")
+
+Nguyen_data <- paste0(path2data, "Nguyen's data/cleaned/")
+```
+
+```{r include = FALSE}
+path2cache <- paste0(path2data, "cache/")
+if (! dir.exists(path2cache)) dir.create(path2cache)
+make_path <- function(x) paste0(path2cache, x)
+file_exists <- function(x) file.exists(make_path(x))
+readRDScache <- function(x) readRDS(make_path(x))
+saveRDScache <- function(object, file) saveRDS(object, make_path(file))
+```
+
+## Packages
+
+```{r}
+library(tibble)
+library(dplyr)
+library(lubridate)
+```
+
+
+## Data
+
+```{r}
+hfmd_full <- Nguyen_data |>
+  paste0("hfmd_full.rds") |>
+  readRDS() |> 
+  as_tibble() |> 
+  mutate(across(ends_with("date"), as.Date))
+```
+
+```{r}
+n <- nrow(hfmd_full)
+sum(is.na(hfmd_full$dob)) / n
+sum(is.na(hfmd_full$onset_date)) / n
+sum(is.na(hfmd_full$age1)) / n
+sum(is.na(hfmd_full$reported_date)) / n
+```
+
+```{r}
+hfmd_full |> 
+  select(contains("date")) |> 
+  pairs()
+```
+
+```{r}
+with(hfmd_full, plot(onset_date, reported_date))
+```
+
+```{r}
+seconds2days <- function(x) x / 86400
+```
+
+
+```{r}
+hfmd_full |> 
+  mutate(delay = reported_date - onset_date) |> 
+  pull(delay) |> 
+  as.numeric() |> 
+  na.exclude() |> 
+  range() |> 
+  seconds2days()
+```
+
+```{r}
+hfmd_full |> 
+  pull(reported_date) |> 
+  year() |> 
+  table()
+```
+
+```{r}
+hfmd2023 <- hfmd_full |> 
+  filter(year(reported_date) == 2023)
+```
+
+```{r}
+n <- nrow(hfmd2023)
+sum(is.na(hfmd2023$dob)) / n
+sum(is.na(hfmd2023$onset_date)) / n
+sum(is.na(hfmd2023$adm_date)) / n
+```
+
+```{r}
+hfmd2023 |> 
+  mutate(delay = reported_date - adm_date) |> 
+  pull(delay) |> 
+  na.exclude() |> 
+  range()
+```
+
+```{r}
+hfmd2023 |> 
+  mutate(delay = reported_date - onset_date) |> 
+  pull(delay) |> 
+  na.exclude() |> 
+  as.numeric() |> 
+  hist()
+```
+
+```{r}
+hfmd2023 |> 
+  filter(reported_date < onset_date) |> 
+  select(reported_date, onset_date)
+```
+
+```{r}
+hfmd2023 |> 
+  filter(reported_date < onset_date) |> 
+  select(reported_date, onset_date)
+```
