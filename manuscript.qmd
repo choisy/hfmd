@@ -1,0 +1,192 @@
+---
+title: "Manuscript"
+number-sections: true
+format:
+  html:
+    toc: true
+    toc-depth: 4
+editor: source
+editor_options: 
+  chunk_output_type: console
+#bibliography: references.bib
+#csl: the-american-naturalist.csl
+---
+
+```{r include = FALSE, eval = FALSE}
+# The code that adds the .nojekyll file to the GitHub repository:
+file <- ".nojekyll"
+file.create(file)
+gert::git_add(file)
+gert::git_commit("Adding the .nojekyll file")
+gert::git_push()
+rm(file)
+```
+
+```{r include = FALSE, eval = FALSE}
+run_all <- function() {
+  knitr::purl("manuscript.qmd", "tmp.R", documentation = FALSE)
+  source("tmp.R")
+  file.remove("tmp.R")  
+}
+
+rerun_all <- function() {
+  rm(list  = grep("run_all", ls(envir = .GlobalEnv), value = TRUE, invert = TRUE),
+     envir = .GlobalEnv)
+  run_all()
+}
+```
+
+```{r include = FALSE, purl = FALSE}
+setHook("plot.new", NULL, action = "replace")
+
+par3 <- function(...) par(..., mgp = c(1.5, .5, 0), bty = "n")
+
+knitr::knit_hooks$set(
+  margin = function(before, options, envir) {
+    if (before) par3(plt = c(.105, .97, .15, .95)) else NULL
+  })
+
+figw <- 7  # default is 7 and maximum possible is 8.3
+figh <- 5  # default is 5
+eps <- .8
+
+knitr::opts_chunk$set(margin     = TRUE,
+                      fig.retina = 2,
+                      fig.align  = "center",
+                      fig.width  = eps * figw,
+                      fig.height = eps * figh) 
+```
+
+
+## Constants
+
+Path to data:
+
+```{r}
+if (Sys.getenv("USER") == "MarcChoisy") {
+  path2data <- paste0("~/Library/CloudStorage/OneDrive-SharedLibraries-OxfordUniversi",
+                      "tyClinicalResearchUnit/OUCRU Modelling - Documents/HFMD HCMC 2",
+                      "023/data/cleaned/")
+} else {
+  path2data <- paste0("D:/OUCRU-Onedrive/OneDrive - Oxford University Clinical Resear",
+                      "ch Unit/Data/HFMD/cleaned/")
+}
+```
+
+Files names:
+
+```{r}
+cases_file <- "hfmd_hcdc.rds"
+sero_file <- "sero_EV-A71_1222-1223.rds"
+viro_file <- "virology_cleaned.rds"
+```
+
+
+## Packages
+
+Required packages:
+
+```{r}
+required <- c("magrittr", "lubridate", "mclust", "dplyr")
+```
+
+Installing those that are not installed yet:
+
+```{r}
+to_install <- required[! required %in% installed.packages()[, "Package"]]
+if (length(to_install)) install.packages(to_install)
+```
+
+Loading the packages for interactive use:
+
+```{r warning = FALSE, message = FALSE}
+invisible(sapply(required, library, character.only = TRUE))
+```
+
+
+## Functions
+
+A tuning of `readRDS()`:
+
+```{r}
+readRDS2 <- function(x) readRDS(paste0(path2data, x))
+```
+
+A tuning of the `plot()` function:
+
+```{r}
+plot_dens <- function(...) plot(..., main = NA, xlab = NA, ylab = "density")
+```
+
+
+## Data
+
+Import data:
+
+```{r}
+df_sero <- readRDS2(sero_file)
+```
+
+```{r}
+df_viro <- readRDS2(viro_file)
+```
+
+```{r}
+df23 <- cases_file |>
+  readRDS2() |> 
+  select(dob, admission_date, district, inout, severity, medi_cen) |> 
+  filter(year(admission_date) == 2023) |> 
+  filter_out(is.na(dob)) |> 
+  unique() |> 
+  mutate(across(severity, ~ case_when(is.na(.x) ~ "Undefined",
+                                      severity %in% c("3", "4") ~ "3 or 4",
+                                      .default = severity) |> as.factor()),
+         across(medi_cen, ~ tolower(stringi::stri_trans_general(.x, "Latin-ASCII"))),
+         across(medi_cen,
+                ~ case_when(.x == "benh vien nhi dong 1" ~ "Children's hospital 1",
+                            .x == "benh vien benh nhiet doi tphcm" ~
+                              "Hospital of Tropical Diseases",
+                            .x == "benh vien nhi dong 2" ~ "Children's hospital 2",
+                            .x == "benh vien nhi dong thanh pho" ~
+                              "City Children's hospital", .default = .x)),
+         age1     = interval(dob, admission_date) / years(1),
+         time     = as.numeric(admission_date),
+         adm_week = as.Date(floor_date(admission_date, "week")),
+         age      = round(age1))
+```
+
+
+## Finite mixture models
+
+```{r}
+mclust_out <- df23 |>
+  filter(time > 19490) |> 
+  select(time) |> 
+  Mclust(2) |> 
+  extract2("parameters")
+
+pnorm1 <- function(q) {
+  pnorm(q, mclust_out$mean[1], sqrt(mclust_out$variance$sigmasq[1]), FALSE)
+}
+
+pnorm2 <- function(q) {
+  pnorm(q, mclust_out$mean[2], sqrt(mclust_out$variance$sigmasq[2]))
+}
+
+with(df23, plot_dens(density(time)))
+
+df23 |>
+  with(density(time)) |> 
+  extract(c("x", "y")) |> 
+  as.data.frame() |>
+  mutate(peak1 = pnorm1(x),
+         peak2 = pnorm2(x),
+         total = peak1 + peak2,
+         peak1 = y * peak1 / total,
+         peak2 = y * peak2 / total) |>
+  with({
+    plot(x, peak1, type = "l")
+    lines(x, peak2)
+  })
+```
+
