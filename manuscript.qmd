@@ -63,10 +63,15 @@ knitr::opts_chunk$set(margin     = TRUE,
 Path to data:
 
 ```{r}
-if (Sys.getenv("USER") == "MarcChoisy") {
+user <- Sys.getenv("USER")
+if (user == "MarcChoisy") {
   path2data <- paste0("~/Library/CloudStorage/OneDrive-SharedLibraries-OxfordUniversi",
                       "tyClinicalResearchUnit/OUCRU Modelling - Documents/HFMD HCMC 2",
                       "023/data/cleaned/")
+} else if (user == "marc") {
+  path2data <- paste0("~/Library/CloudStorage/OneDrive-SharedLibraries-OxfordUniversi",
+                      "tyClinicalResearchUnit/OUCRU Modelling - HFMD HCMC 2023/data/c",
+                      "leaned/")
 } else {
   path2data <- paste0("D:/OUCRU-Onedrive/OneDrive - Oxford University Clinical Resear",
                       "ch Unit/Data/HFMD/cleaned/")
@@ -87,7 +92,8 @@ viro_file <- "virology_cleaned.rds"
 Required packages:
 
 ```{r}
-required <- c("magrittr", "lubridate", "mclust", "dplyr")
+required <- c("magrittr", "lubridate", "stringi", "stringr", "purrr", "tidyr",
+              "mclust", "dplyr")
 ```
 
 Installing those that are not installed yet:
@@ -112,24 +118,29 @@ A tuning of `readRDS()`:
 readRDS2 <- function(x) readRDS(paste0(path2data, x))
 ```
 
-A tuning of the `plot()` function:
+Some tunings of the `plot()` function:
 
 ```{r}
 plot_dens <- function(...) plot(..., main = NA, xlab = NA, ylab = "density")
+plot_l <- function(...) plot(..., type = "l")
 ```
 
 
 ## Data
 
-Import data:
+Serological data:
 
 ```{r}
 df_sero <- readRDS2(sero_file)
 ```
 
+Virological data:
+
 ```{r}
 df_viro <- readRDS2(viro_file)
 ```
+
+Case report data:
 
 ```{r}
 df23 <- cases_file |>
@@ -141,7 +152,7 @@ df23 <- cases_file |>
   mutate(across(severity, ~ case_when(is.na(.x) ~ "Undefined",
                                       severity %in% c("3", "4") ~ "3 or 4",
                                       .default = severity) |> as.factor()),
-         across(medi_cen, ~ tolower(stringi::stri_trans_general(.x, "Latin-ASCII"))),
+         across(medi_cen, ~ tolower(stri_trans_general(.x, "Latin-ASCII"))),
          across(medi_cen,
                 ~ case_when(.x == "benh vien nhi dong 1" ~ "Children's hospital 1",
                             .x == "benh vien benh nhiet doi tphcm" ~
@@ -156,7 +167,59 @@ df23 <- cases_file |>
 ```
 
 
-## Finite mixture models
+## Weekly incidence
+
+Calculate incidence from `start` by steps of `by`:
+
+```{r}
+incidence_from <- function(start, by) {
+  df23 |> 
+    mutate(week = cut(time, with(df23, seq(start, max(time), by)),
+                      include.lowest = TRUE)) |> 
+    group_by(week) |> 
+    tally() |> 
+    mutate(across(week, as.character),
+           across(week, ~ .x |>
+                    str_remove("\\[") |> str_remove("\\(") |> str_remove("]"))) |> 
+    separate(week, c("from", "to")) |> 
+    mutate(across(where(is.character), as.integer),
+           x = (from + to) / 2)
+}
+```
+
+Calculate incidence from `start` by steps of `by` but sliding `start` by steps of 1
+day:
+
+```{r}
+incidence <- function(start, by) {
+  (start + 0:(by - 1)) |>
+    map_dfr(~ incidence_from(.x, by)) |> 
+    arrange(x)
+}
+```
+
+Calculate daily weekly incidences:
+
+```{r}
+w_incidence <- from <- df23 |> 
+  pull(time) |> 
+  min() |>
+  incidence(7)
+```
+
+Plotting it:
+
+```{r}
+with(w_incidence, plot_l(x, n, col = 4, lwd = 2, xaxt = "n",
+                         xlab = NA, ylab = "weekly incidence"))
+ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
+axis(1, as.numeric(ats), month(ats, TRUE))
+```
+
+
+## Finite mixture model
+
+Building the model:
 
 ```{r}
 mclust_out <- df23 |>
@@ -165,28 +228,34 @@ mclust_out <- df23 |>
   Mclust(2) |> 
   extract2("parameters")
 
-pnorm1 <- function(q) {
-  pnorm(q, mclust_out$mean[1], sqrt(mclust_out$variance$sigmasq[1]), FALSE)
-}
+means <- mclust_out$mean
+stdev <- sqrt(mclust_out$variance$sigmasq)
 
-pnorm2 <- function(q) {
-  pnorm(q, mclust_out$mean[2], sqrt(mclust_out$variance$sigmasq[2]))
-}
+pnorm1 <- function(q) pnorm(q, means[1], stdev[1], FALSE)
+pnorm2 <- function(q) pnorm(q, means[2], stdev[2])
+```
 
-with(df23, plot_dens(density(time)))
+Using the model to separate the two peaks
 
-df23 |>
-  with(density(time)) |> 
-  extract(c("x", "y")) |> 
-  as.data.frame() |>
+```{r}
+two_peaks <- w_incidence |> 
   mutate(peak1 = pnorm1(x),
          peak2 = pnorm2(x),
          total = peak1 + peak2,
-         peak1 = y * peak1 / total,
-         peak2 = y * peak2 / total) |>
-  with({
-    plot(x, peak1, type = "l")
-    lines(x, peak2)
-  })
+         peak1 = n * peak1 / total,
+         peak2 = n * peak2 / total,
+         total = peak1 + peak2)
+
+with(two_peaks, {
+  plot(x, peak1, type = "l", lwd = 2, col = 2, xaxt = "n",
+       xlab = NA, ylab = "weekly incidence")
+  lines(x, peak2, lwd = 2, col = 4)
+})
+
+ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
+axis(1, as.numeric(ats), month(ats, TRUE))
+
+with(w_incidence, lines(x, n, lwd = 2, lty = 2))
 ```
+
 
