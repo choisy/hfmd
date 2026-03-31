@@ -194,7 +194,8 @@ day:
 incidence <- function(start, by) {
   (start + 0:(by - 1)) |>
     map_dfr(~ incidence_from(.x, by)) |> 
-    arrange(x)
+    arrange(x) |> 
+    na.exclude()
 }
 ```
 
@@ -256,6 +257,19 @@ ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
 axis(1, as.numeric(ats), month(ats, TRUE))
 
 with(w_incidence, lines(x, n, lwd = 2, lty = 2))
+```
+
+```{r}
+two_peaks |> 
+  filter(is.na(x))
+```
+
+
+```{r}
+two_peaks |> 
+  filter_out(peak2 > 2) |> 
+  pull(x) |> 
+  max()
 ```
 
 
