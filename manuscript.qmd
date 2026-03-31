@@ -93,7 +93,7 @@ Required packages:
 
 ```{r}
 required <- c("magrittr", "lubridate", "stringi", "stringr", "purrr", "tidyr",
-              "mclust", "dplyr")
+              "ISOweek", "mclust", "mgcv", "dplyr")
 ```
 
 Installing those that are not installed yet:
@@ -121,8 +121,20 @@ readRDS2 <- function(x) readRDS(paste0(path2data, x))
 Some tunings of the `plot()` function:
 
 ```{r}
-plot_dens <- function(...) plot(..., main = NA, xlab = NA, ylab = "density")
-plot_l <- function(...) plot(..., type = "l")
+plotd <- function(...) plot(..., lwd = 2, main = NA)
+plotl <- function(...) plot(..., type = "l", lwd = 2)
+```
+
+A tuning of `lines()`:
+
+```{r}
+lines2 <- function(...) lines(..., lwd = 2)
+```
+
+A tuning of `density()`:
+
+```{r}
+density2 <- function(...) density(..., n = 2048)
 ```
 
 
@@ -208,13 +220,20 @@ w_incidence <- from <- df23 |>
   incidence(7)
 ```
 
+A function that plots the incidence `y` as a function of time `x`:
+
+```{r}
+plot_ts <- function(x, y, ...) {
+  plotl(x, y, xaxt = "n", xlab = NA, ylab = "weekly incidence", ...)
+  ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
+  axis(1, as.numeric(ats), month(ats, TRUE))
+}
+```
+
 Plotting it:
 
 ```{r}
-with(w_incidence, plot_l(x, n, col = 4, lwd = 2, xaxt = "n",
-                         xlab = NA, ylab = "weekly incidence"))
-ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
-axis(1, as.numeric(ats), month(ats, TRUE))
+with(w_incidence, plot_ts(x, n, col = 4))
 ```
 
 
@@ -244,32 +263,144 @@ two_peaks <- w_incidence |>
          peak2 = pnorm2(x),
          total = peak1 + peak2,
          peak1 = n * peak1 / total,
-         peak2 = n * peak2 / total,
-         total = peak1 + peak2)
+         peak2 = n * peak2 / total)
 
 with(two_peaks, {
-  plot(x, peak1, type = "l", lwd = 2, col = 2, xaxt = "n",
-       xlab = NA, ylab = "weekly incidence")
-  lines(x, peak2, lwd = 2, col = 4)
+  plot_ts(x, peak1, col = 2)
+  lines2(x, peak2, col = 4)
 })
 
-ats <- ymd(c(paste0("2023", sprintf("%02d", 1:12), "01"), "20240101"))
-axis(1, as.numeric(ats), month(ats, TRUE))
-
-with(w_incidence, lines(x, n, lwd = 2, lty = 2))
-```
-
-```{r}
-two_peaks |> 
-  filter(is.na(x))
+with(w_incidence, lines2(x, n, lty = 2))
 ```
 
 
+## Age distributions
+
+Computing the thresholds:
+
 ```{r}
-two_peaks |> 
+th_p1 <- two_peaks |> 
   filter_out(peak2 > 2) |> 
   pull(x) |> 
   max()
+
+th_p2 <- two_peaks |> 
+  filter_out(peak1 > 2) |> 
+  pull(x) |> 
+  min()
 ```
+
+Split the data set into peaks
+
+```{r}
+df23 <- mutate(df23, peak = ifelse(time < th_p1, "peak1",
+                                   ifelse(time > th_p2, "peak2", "unknown")))
+```
+
+```{r}
+df23 |> 
+  group_by(peak) |> 
+  tally()
+```
+
+```{r}
+df23 |> 
+  filter(peak == "peak1") |> 
+  pull(age1) |> 
+  density2() |> 
+  plotd(xlim = c(0, 10), col = 2, xlab = "age (years)", ylab = "density")
+
+df23 |> 
+  filter(peak == "peak2") |> 
+  pull(age1) |> 
+  density2() |> 
+  with(lines2(x, y, col = 4))
+
+abline(v = 0:10, col = "grey")
+```
+
+```{r}
+df23 |> 
+  filter(peak == "peak1") |> 
+  with(plot(admission_date, age1, ylim = c(0, 10)))
+```
+
+```{r}
+predict2 <- function(object, newdata, ci = .95, ...) {
+  if (! is.data.frame(newdata)) newdata <- as_tibble(newdata)
+  bind_cols(newdata,
+            as_tibble(predict(object, newdata, se = ci, type = "response", ...)))
+} 
+```
+
+```{r}
+tmp <- filter(df23, peak == "peak1")
+mgcv::gam(age1 ~ s(time, k = 30), data = tmp) |> 
+  predict2(list(time = seq(min(tmp$time), max(tmp$time), le = 512))) |> 
+  mutate(across(time, as_date)) |> 
+  with({
+    plotl(time, fit, ylim = c(1, 3.5))
+    lines2(time, ll)
+    lines2(time, ul)
+  })
+```
+
+```{r}
+df23 |> 
+  filter(peak == "peak1") |> 
+  arrange(time) |> 
+  slice(1:100) |> 
+  summarise(time = mean(time), age = list(quantile(age1)))
+```
+
+```{r}
+f <- function(x = 0, w = 100) {
+  df23 |> 
+    filter(peak == "peak1") |> 
+    arrange(time) |> 
+    slice(1:w + x) |> 
+    summarise(time = mean(time),
+              age = list(quantile(age1)))
+}
+```
+
+
+
+```{r}
+out <- map_dfr(1:(nrow(df23) - 100), f) |> 
+  unnest_wider(age)
+```
+
+
+## Births
+
+```{r}
+hcm_births_perma <- readRDS2("linelisting/hcm_births_perma.rds")
+hcm_births_register <- readRDS2("linelisting/hcm_births_register.rds")
+```
+
+```{r}
+dim(hcm_births_perma)
+dim(hcm_births_register)
+```
+
+```{r}
+hcm_births_perma |> 
+  group_by(dob) |> 
+  tally() |> 
+  with(plot(dob, n))
+```
+
+```{r}
+hcm_births_register |> 
+  group_by(dob) |> 
+  tally() |> 
+  with(plot(dob, n))
+abline(v = 2014:2022)
+```
+
+
+
+
 
 
